@@ -54,7 +54,7 @@ class CrawlerTest extends TestCase
     /** @test */
     public function testCrawlerDirIsRetrieved()
     {
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH'));
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH'), 1);
         $this->assertNotEmpty($data);
         $this->assertArrayHasKey('DT-P-F', $data);
         $this->assertEquals(true, $data['DT-P-F']['isDirectory']);
@@ -63,7 +63,7 @@ class CrawlerTest extends TestCase
     /** @test */
     public function testCrawlerFileIsRetrieved()
     {
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', true, 1);
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', 0, 1);
         $this->assertCount(1, $data);
         $file = current($data);
         $this->assertEquals(true, $file['isRegularFile']);
@@ -73,7 +73,7 @@ class CrawlerTest extends TestCase
     public function testCrawlerFileCountIsRetrieved()
     {
         $fileCount = rand(1, 9);
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', true, $fileCount);
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', 0, $fileCount);
         $this->assertCount($fileCount, $data);
     }
 
@@ -83,7 +83,7 @@ class CrawlerTest extends TestCase
         $this->delete_files(realpath(\Env::get('IESO_ENBRIDGE_PATH')));
 
         $fileCount = 1;
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', true, $fileCount, true);
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', 0, $fileCount, true);
         foreach($data as $k => $v) {
             $fi = new \FilesystemIterator($v['storage'], \FilesystemIterator::SKIP_DOTS);
             $this->assertEquals($fileCount, iterator_count($fi));
@@ -95,21 +95,8 @@ class CrawlerTest extends TestCase
     {
         $this->delete_files(realpath(\Env::get('IESO_ENBRIDGE_PATH')));
 
-        $fileCount = 9;
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', true, $fileCount, true);
-        foreach($data as $k => $v) {
-            $fi = new \FilesystemIterator($v['storage'], \FilesystemIterator::SKIP_DOTS);
-            $this->assertEquals($fileCount, iterator_count($fi));
-        }
-    }
-
-    /** @test */
-    public function testCrawlerMultipleFolderAndFilesWrittenToStorage()
-    {
-        $this->delete_files(realpath(\Env::get('IESO_ENBRIDGE_PATH')));
-
-        $fileCount = 9;
-        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', true, $fileCount, true);
+        $fileCount = 4;
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', 0, $fileCount, true);
         foreach($data as $k => $v) {
             $fi = new \FilesystemIterator($v['storage'], \FilesystemIterator::SKIP_DOTS);
             $this->assertEquals($fileCount, iterator_count($fi));
@@ -123,5 +110,25 @@ class CrawlerTest extends TestCase
     public function testCrawlerException()
     {
         $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'FAKE-PATH');
+    }
+
+    /** @test */
+    public function testFiletime()
+    {
+        $fileCount = 5;
+        $data = $this->crawler->request(\Env::get('IESO_ROOT_PATH') . 'DT-P-F', 0, $fileCount, true);
+        foreach($data as $k => $v) {
+            $fi = new \FilesystemIterator($v['storage'], \FilesystemIterator::SKIP_DOTS);
+            $this->assertEquals($fileCount, iterator_count($fi));
+        }
+    }
+
+    /** @test */
+    public function testDirtime()
+    {
+        $data = $this->crawler->getData([
+            \Env::get('IESO_ROOT_PATH') . 'TRA-Results/',
+        ]);
+        $this->assertTrue($data);
     }
 }

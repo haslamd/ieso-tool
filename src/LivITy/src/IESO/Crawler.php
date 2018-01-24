@@ -17,6 +17,8 @@ Class Crawler
     /** @var array|null available class props */
     protected $props = [];
 
+    protected $log;
+
     /**
      * Create class, seeds config
      *
@@ -26,6 +28,7 @@ Class Crawler
      */
     public function __construct(Config $config, Logger $logger)
     {
+        $this->log = $logger;
         $this->props['client'] = new Client([
             'base_uri' => \Env::get('IESO_BASE_URI')
         ]);
@@ -64,30 +67,61 @@ Class Crawler
         }
     }
 
-    public function recurse($path)
+    public function recurse(String $path)
     {
-        $res = $this->client->request('GET', $path, [
-            'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')]
-        ]);
-
-        $result = json_decode($res->getBody()->getContents(), true);
+        $paths = explode('/', $path);
+        $result = $this->request($path);
+        $this->props['stats'] = [];
+        $this->log->get_logger()->info("Scanning Path $path");
 
         foreach ($result['files'] as $k => $v) {
+            $storage = preg_replace('#^TIDAL/#', '\\' . \Env::get('IESO_ENBRIDGE_PATH'), $path);
+            if (!file_exists($storage)) {
+                mkdir($storage, 0777, true);
+            }
+
             if ($v['isDirectory']) {
                 $dir = $path . $v['fileName'] . '/';
-                if (file_exists(\Env::get('IESO_ENBRIDGE_PATH') .  $v['fileName']) || mkdir(\Env::get('IESO_ENBRIDGE_PATH') . $v['fileName'], 0777, true)) {
-                    $log->info("Scanning Directory $dir");
-                    recurse($dir);
-                }
+                $this->log->get_logger()->info("Scanning Directory $dir");
+                $this->recurse($dir);
             } else {
                 if (!preg_match('/^(.*)_v[0-9]{1,2}\.[a-z]*$/', $v['fileName'])) {
-                    $fileName = $path . $v['fileName'];
-                    $file = preg_replace('#^TIDAL/#', '', $fileName);
-                    $log->info("retrieving file $file");
-                    $client->request('GET', $fileName, ['auth' => [\EnvL::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')], 'sink' => \Env::get('IESO_ENBRIDGE_PATH') . '/'. $file]);
+                    $filePath = $storage .  $v['fileName'];
+
+                    if (file_exists($filePath)) {
+                        $file_time_disk = filemtime($filePath);
+                        if (substr($v['lastModifiedTime'], 0, 10) != $file_time_disk) {
+                            $this->log->get_logger()->info('updating file ' . $v['fileName']);
+                            $this->client->request('GET', $path . $v['fileName'], [
+                                'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')],
+                                'sink' => $filePath
+                            ]);
+                            touch($filePath, substr($v['lastModifiedTime'], 0, 10), substr($v['lastModifiedTime'], 0, 10));
+                            $this->props['stats'][$paths[1]]['updated']['files'][] = [ 'name' => $v['fileName'] ];
+                            @$this->props['stats'][$paths[1]]['updated']['count'] += 1;
+                        }
+                    } else {
+                        $this->props['stats'][$paths[1]]['created']['files'][] = [ 'name' => $v['fileName'] ];
+                        @$this->props['stats'][$paths[1]]['created']['count'] += 1;
+                        $this->log->get_logger()->info('Retrieving file  ' . $v['fileName']);
+                        $this->client->request('GET', $path . $v['fileName'], [
+                            'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')],
+                            'sink' => $filePath
+                        ]);
+                        touch($filePath, substr($v['lastModifiedTime'], 0, 10), substr($v['lastModifiedTime'], 0, 10));
+                    }
                 }
             }
         }
+        return $this->props['stats'];
+    }
+
+    public function getData(Array $paths)
+    {
+        foreach ($paths as $path) {
+            $this->props['stats'] = $this->recurse($path);
+        }
+        return true;
     }
 
     protected function getFileData(Array $data, String $path, Int $count, Bool $dl = false)
@@ -130,10 +164,23 @@ Class Crawler
                     mkdir($v['storage']);
                 }
 
-                $this->client->request('GET', $v['filePath'], [
-                    'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')],
-                    'sink' => realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file']
-                ]);
+                if (file_exists(realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file'])) {
+                    $file_time_disk = filemtime(realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file']);
+                    if (substr($v['lastModifiedTime'], 0, 10) == $file_time_disk) {
+                    } else {
+                        $this->client->request('GET', $v['filePath'], [
+                            'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')],
+                            'sink' => realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file']
+                        ]);
+                        touch(realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file'], substr($v['lastModifiedTime'], 0, 10), substr($v['lastModifiedTime'], 0, 10));
+                    }
+                } else {
+                    $this->client->request('GET', $v['filePath'], [
+                        'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')],
+                        'sink' => realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file']
+                    ]);
+                    touch(realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. $v['file'], substr($v['lastModifiedTime'], 0, 10), substr($v['lastModifiedTime'], 0, 10));
+                }
             }
         }
 
@@ -163,22 +210,28 @@ Class Crawler
     /**
      *
      */
-    public function request(String $path, Bool $extract = false, Int $count = 0, Bool $dl = false)
+    public function request(String $path, Int $extract = 2, Int $count = 0, Bool $dl = false)
     {
         try {
             $res = $this->client->request('GET', $path, [
                 'auth' => [\Env::get('IESO_AUTH_USER'), \Env::get('IESO_AUTH_PASSWORD')]
             ]);
         } catch(TransferException $e) {
-            throw new \Exception('Something bad happened!');
+            throw new \Exception($e->getMessage());
         }
 
         $data = json_decode($res->getBody()->getContents(), true);
 
-        if ($extract) {
-            return $this->getFileData($data, $path, $count, $dl);
-        } else {
-            return $this->getDirData($data);
+        switch ($extract) {
+            case 0:
+                return $this->getFileData($data, $path, $count, $dl);
+                break;
+            case 1:
+                return $this->getDirData($data);
+                break;
+            case 2:
+                return $data;
+                break;
         }
 
     }

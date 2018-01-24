@@ -10,7 +10,7 @@
 declare(strict_types=1);
 
 use LivITy\IESO\Logger,
-    LiviTy\IESO\Config;
+    LivITy\IESO\Config;
 use PHPUnit\Framework\TestCase;
 
 class LoggerTest extends TestCase
@@ -23,7 +23,7 @@ class LoggerTest extends TestCase
         $root = dirname(__DIR__, 4) . '\\tests\\';
         $config = new Config($root);
         $this->logger = new Logger($config, 'ieso_test');
-        $this->file = realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. 'ieso_test_' . date($this->logger->getDateFormat()) . '.log';
+        $this->file = realpath(\Env::get('IESO_ENBRIDGE_PATH')) . '/'. 'ieso_test.log';
     }
 
     /** @test */
@@ -49,5 +49,23 @@ class LoggerTest extends TestCase
         $this->logger->get_logger()->info($text);
         $this->assertContains($text, file_get_contents($this->file));
     }
+
+    /** @test */
+	    public function testFileSize()
+	    {
+	       $logger = $this->logger->get_logger();
+	       $handlers = $logger->getHandlers();
+	       $url = $handlers[0]->getUrl();
+
+	       $filesize = 0;
+	       if (file_exists($file = \Env::get('IESO_ENBRIDGE_PATH') . '/ieso.log')) {
+	           $filesize = filesize($file);
+	           if ($filesize > $this->logger->stringSizeToBytes('10 MB')) {
+	               unlink($file);
+	               $filesize = 0;
+	           }
+	       }
+	       $this->assertLessThan(10485760, $filesize);
+   }
 
 }
